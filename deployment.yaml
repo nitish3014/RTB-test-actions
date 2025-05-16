@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: landing-page
+  labels:
+    app: landing-page
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: landing-page
+  template:
+    metadata:
+      labels:
+        app: landing-page
+    spec:
+      containers:
+      - name: landing-page
+        image: 972251037797.dkr.ecr.us-east-1.amazonaws.com/test:latest
+        ports:
+        - containerPort: 5000
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+      nodeSelector:
+        kubernetes.io/arch: arm64
+        eks.amazonaws.com/nodegroup: be-ng
