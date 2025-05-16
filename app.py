@@ -2,7 +2,7 @@ from flask import Flask, render_template_string
 
 app = Flask(__name__)
 
-# Simple one-page landing page
+# Simple one-page landing page yep
 LANDING_PAGE = """
 <!DOCTYPE html>
 <html>
