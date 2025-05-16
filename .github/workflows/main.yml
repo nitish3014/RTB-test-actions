@@ -48,15 +48,18 @@ jobs:
           echo "${{ secrets.bastion_pem_key }}" > bastion_key.pem
           chmod 400 bastion_key.pem
           
-          ssh -i bastion_key.pem -o StrictHostKeyChecking=no ${{ env.BASTION_USER }}@${{ env.BASTION_IP }} \
-            "aws eks --region ${{ env.AWS_REGION }} update-kubeconfig --name ${{ env.EKS_CLUSTER }} && cat ~/.kube/config" > kubeconfig
-
+          ssh -q -i bastion_key.pem -o StrictHostKeyChecking=no ${{ env.BASTION_USER }}@${{ env.BASTION_IP }} \
+            "aws eks --region ${{ env.AWS_REGION }} update-kubeconfig --name ${{ env.EKS_CLUSTER }}"
+          
+          scp -i bastion_key.pem -o StrictHostKeyChecking=no ${{ env.BASTION_USER }}@${{ env.BASTION_IP }}:~/.kube/config ./kubeconfig
+          
           if [ -s kubeconfig ]; then
             echo "Kubeconfig fetched successfully"
           else
             echo "Failed to fetch kubeconfig"
             exit 1
           fi
+      
 
       - name: Deploy to EKS using fetched kubeconfig
         env:
