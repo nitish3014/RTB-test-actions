@@ -46,7 +46,7 @@ jobs:
       - name: Setup SSH key and fetch kubeconfig via Bastion
         run: |
           echo "${{ secrets.bastion_pem_key }}" > bastion_key.pem
-          chmod 600 bastion_key.pem
+          chmod 400 bastion_key.pem
           
           ssh -i bastion_key.pem -o StrictHostKeyChecking=no ${{ env.BASTION_USER }}@${{ env.BASTION_IP }} \
             "aws eks --region ${{ env.AWS_REGION }} update-kubeconfig --name ${{ env.EKS_CLUSTER }} && cat ~/.kube/config" > kubeconfig
