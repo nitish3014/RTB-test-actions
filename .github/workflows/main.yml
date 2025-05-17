@@ -19,30 +19,35 @@ jobs:
         shell: bash
 
     steps:
-      # ───── Checkout first ─────
+      # ───── 1. Checkout ─────
       - name: Checkout code
         uses: actions/checkout@v3
 
-      # ───── Notify Build Start ─────
+      # ───── 2. Notify Build Start ─────
       - name: Notify Build Start
         id: notify_start
+        continue-on-error: true
         run: |
+          set +e
+          # grab last commit info
           commit_details=$(git log -1 --pretty=format:'%s|%an')
           commit_message=${commit_details%%|*}
           committer_name=${commit_details##*|}
           build_name="${GITHUB_REPOSITORY}"
           build_number="${GITHUB_RUN_NUMBER}"
           build_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # payload
           read -r -d '' payload <<EOF
           {
             "text": "🚀 *Build Started*\n*Repository:* ${build_name}\n*Run #:* ${build_number}\n*Trigger Commit:* ${commit_message}\n*By:* ${committer_name}\n*URL:* ${build_url}"
           }
           EOF
+          # fire off, but don’t fail build if this errors
           curl -X POST -H 'Content-Type: application/json' \
             --data "$payload" \
-            "${{ secrets.GOOGLE_CHAT_WEBHOOK }}"
+            "${{ secrets.GOOGLE_CHAT_WEBHOOK }}" || true
 
-      # ───── Configure & Deploy ─────
+      # ───── 3. AWS Credentials ─────
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -50,9 +55,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # ───── 4. ECR Login ─────
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v1
 
+      # ───── 5. Build & Push Image ─────
       - name: Build, tag, and push image to Amazon ECR
         env:
           ECR_REGISTRY: 972251037797.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
@@ -63,16 +70,19 @@ jobs:
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG --push .
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
+      # ───── 6. Install kubectl ─────
       - name: Install kubectl
         uses: azure/setup-kubectl@v3
         with:
           version: 'latest'
 
+      # ───── 7. Fetch Kubeconfig via Bastion ─────
       - name: Setup SSH key and fetch kubeconfig via Bastion
         run: |
           echo "${{ secrets.bastion_pem_key }}" > bastion_key.pem
           chmod 400 bastion_key.pem
-          ssh -q -i bastion_key.pem -o StrictHostKeyChecking=no ${{ env.BASTION_USER }}@${{ env.BASTION_IP }} \
+          ssh -q -i bastion_key.pem -o StrictHostKeyChecking=no \
+            ${{ env.BASTION_USER }}@${{ env.BASTION_IP }} \
             "aws eks --region ${{ env.AWS_REGION }} update-kubeconfig --name ${{ env.EKS_CLUSTER }}"
           scp -i bastion_key.pem -o StrictHostKeyChecking=no \
             ${{ env.BASTION_USER }}@${{ env.BASTION_IP }}:~/.kube/config ./kubeconfig
@@ -80,6 +90,7 @@ jobs:
             echo "❌ Failed to fetch kubeconfig" && exit 1
           fi
 
+      # ───── 8. Deploy to EKS ─────
       - name: Deploy to EKS using fetched kubeconfig
         env:
           KUBECONFIG: ${{ github.workspace }}/kubeconfig
@@ -88,12 +99,14 @@ jobs:
           kubectl apply -f deployment.yaml
           kubectl apply -f service.yaml
 
-      # ───── Notify Build Result ─────
+      # ───── 9. Notify Build Result ─────
       - name: Notify Build Result
         if: always()
+        continue-on-error: true
         run: |
-          status="${{ job.status }}"
-          if [ "$status" = "success" ]; then
+          set +e
+          # success vs failure
+          if [ "${{ job.status }}" = "success" ]; then
             build_status="✅ Succeeded"
           else
             build_status="❌ Failed"
@@ -111,4 +124,4 @@ jobs:
           EOF
           curl -X POST -H 'Content-Type: application/json' \
             --data "$result_payload" \
-            "${{ secrets.GOOGLE_CHAT_WEBHOOK }}"
+            "${{ secrets.GOOGLE_CHAT_WEBHOOK }}" || true
