@@ -19,19 +19,20 @@ jobs:
         shell: bash
 
     steps:
-      # ───── Notify start ─────
+      # ───── Checkout first ─────
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # ───── Notify Build Start ─────
       - name: Notify Build Start
         id: notify_start
         run: |
-          # fetch last commit details
           commit_details=$(git log -1 --pretty=format:'%s|%an')
           commit_message=${commit_details%%|*}
           committer_name=${commit_details##*|}
-          # compose variables
           build_name="${GITHUB_REPOSITORY}"
           build_number="${GITHUB_RUN_NUMBER}"
           build_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          # build the JSON payload
           read -r -d '' payload <<EOF
           {
             "text": "🚀 *Build Started*\n*Repository:* ${build_name}\n*Run #:* ${build_number}\n*Trigger Commit:* ${commit_message}\n*By:* ${committer_name}\n*URL:* ${build_url}"
@@ -41,10 +42,7 @@ jobs:
             --data "$payload" \
             "${{ secrets.GOOGLE_CHAT_WEBHOOK }}"
 
-      # ───── Checkout + Deploy steps ─────
-      - name: Checkout code
-        uses: actions/checkout@v3
-
+      # ───── Configure & Deploy ─────
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -90,25 +88,22 @@ jobs:
           kubectl apply -f deployment.yaml
           kubectl apply -f service.yaml
 
-      # ───── Notify end (always) ─────
+      # ───── Notify Build Result ─────
       - name: Notify Build Result
         if: always()
         run: |
-          # determine outcome
           status="${{ job.status }}"
           if [ "$status" = "success" ]; then
             build_status="✅ Succeeded"
           else
             build_status="❌ Failed"
           fi
-          # reuse commit info
           commit_details=$(git log -1 --pretty=format:'%s|%an')
           commit_message=${commit_details%%|*}
           committer_name=${commit_details##*|}
           build_name="${GITHUB_REPOSITORY}"
           build_number="${GITHUB_RUN_NUMBER}"
           build_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          # payload
           read -r -d '' result_payload <<EOF
           {
             "text": "🔔 *Build Completed*\n*Repository:* ${build_name}\n*Run #:* ${build_number}\n*Status:* ${build_status}\n*Trigger Commit:* ${commit_message}\n*By:* ${committer_name}\n*URL:* ${build_url}"
