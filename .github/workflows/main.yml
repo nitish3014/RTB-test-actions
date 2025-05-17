@@ -14,8 +14,34 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
+      # ───── Notify start ─────
+      - name: Notify Build Start
+        id: notify_start
+        run: |
+          # fetch last commit details
+          commit_details=$(git log -1 --pretty=format:'%s|%an')
+          commit_message=${commit_details%%|*}
+          committer_name=${commit_details##*|}
+          # compose variables
+          build_name="${GITHUB_REPOSITORY}"
+          build_number="${GITHUB_RUN_NUMBER}"
+          build_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # build the JSON payload
+          read -r -d '' payload <<EOF
+          {
+            "text": "🚀 *Build Started*\n*Repository:* ${build_name}\n*Run #:* ${build_number}\n*Trigger Commit:* ${commit_message}\n*By:* ${committer_name}\n*URL:* ${build_url}"
+          }
+          EOF
+          curl -X POST -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "${{ secrets.GOOGLE_CHAT_WEBHOOK }}"
+
+      # ───── Checkout + Deploy steps ─────
       - name: Checkout code
         uses: actions/checkout@v3
 
@@ -48,19 +74,13 @@ jobs:
         run: |
           echo "${{ secrets.bastion_pem_key }}" > bastion_key.pem
           chmod 400 bastion_key.pem
-          
           ssh -q -i bastion_key.pem -o StrictHostKeyChecking=no ${{ env.BASTION_USER }}@${{ env.BASTION_IP }} \
             "aws eks --region ${{ env.AWS_REGION }} update-kubeconfig --name ${{ env.EKS_CLUSTER }}"
-          
-          scp -i bastion_key.pem -o StrictHostKeyChecking=no ${{ env.BASTION_USER }}@${{ env.BASTION_IP }}:~/.kube/config ./kubeconfig
-          
-          if [ -s kubeconfig ]; then
-            echo "Kubeconfig fetched successfully"
-          else
-            echo "Failed to fetch kubeconfig"
-            exit 1
+          scp -i bastion_key.pem -o StrictHostKeyChecking=no \
+            ${{ env.BASTION_USER }}@${{ env.BASTION_IP }}:~/.kube/config ./kubeconfig
+          if [ ! -s kubeconfig ]; then
+            echo "❌ Failed to fetch kubeconfig" && exit 1
           fi
-      
 
       - name: Deploy to EKS using fetched kubeconfig
         env:
@@ -69,3 +89,31 @@ jobs:
           kubectl get nodes
           kubectl apply -f deployment.yaml
           kubectl apply -f service.yaml
+
+      # ───── Notify end (always) ─────
+      - name: Notify Build Result
+        if: always()
+        run: |
+          # determine outcome
+          status="${{ job.status }}"
+          if [ "$status" = "success" ]; then
+            build_status="✅ Succeeded"
+          else
+            build_status="❌ Failed"
+          fi
+          # reuse commit info
+          commit_details=$(git log -1 --pretty=format:'%s|%an')
+          commit_message=${commit_details%%|*}
+          committer_name=${commit_details##*|}
+          build_name="${GITHUB_REPOSITORY}"
+          build_number="${GITHUB_RUN_NUMBER}"
+          build_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # payload
+          read -r -d '' result_payload <<EOF
+          {
+            "text": "🔔 *Build Completed*\n*Repository:* ${build_name}\n*Run #:* ${build_number}\n*Status:* ${build_status}\n*Trigger Commit:* ${commit_message}\n*By:* ${committer_name}\n*URL:* ${build_url}"
+          }
+          EOF
+          curl -X POST -H 'Content-Type: application/json' \
+            --data "$result_payload" \
+            "${{ secrets.GOOGLE_CHAT_WEBHOOK }}"
